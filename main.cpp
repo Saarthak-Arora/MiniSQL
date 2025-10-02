@@ -5,6 +5,15 @@
 #include "include/parser/parser.hpp"
 #include "include/parser/structQuery.hpp"
 
+void print(astNode* node, int depth = 0) {
+    if (!node) return;
+    std::string indent(depth * 2, ' ');
+    std::cout << indent << node->nodeType << ": " << node->value << std::endl;
+    for (auto child : node->children) {
+        print(child, depth + 1);
+    }
+}
+
 int main() {
     std::cout << "welcome to your database center" << std::endl;
     std::cout << "This is a simple database program." << std::endl;
@@ -52,7 +61,12 @@ int main() {
 
         parser pars;
         queryStructure storedQuery;
-        pars.parse(tokens, storedQuery);
+        size_t i = 0;
+        astNode* root = new astNode("ROOT", "ROOT");
+        pars.parse(tokens, i, storedQuery, root);
+
+        print(root);
+        delete root; // Clean up the AST to prevent memory leaks
 
         std::cout << "-----------------------------------" << std::endl;
     }
