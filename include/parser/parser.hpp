@@ -3,7 +3,7 @@
 #include <vector>
 #include <utility>
 #include "structQuery.hpp"
-#include "../ast/ast.hpp"
+#include "ast.hpp"
 
 class parser{
     public:
