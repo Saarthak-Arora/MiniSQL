@@ -1,206 +1,336 @@
-#include <iostream>
 #include <string>
 #include <algorithm>
-#include <unordered_set>
 #include <unordered_map>
+#include <cctype>
 #include "../../include/parser/lexer.hpp"
+#include "../../include/common/token.hpp"
 
-// Define keywords, operators, punctuation, and datatypes
-const std::unordered_set<std::string> keywords = {
-    "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET", "DELETE",
-    "CREATE", "TABLE", "DROP", "ALTER", "ADD", "NULL", "PRIMARY_KEY", "FOREIGN_KEY", "NOT_NULL",
-    "DEFAULT", "UNIQUE", "ON", "IS", "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "OUTER", "AS", "BY", "GROUP", "ORDER", "HAVING", "DISTINCT", "LIMIT", "OFFSET", "REFERENCES", "EXISTS", "AND", "OR", "NOT", "IN", "LIKE", "BETWEEN", "ALL", "ANY"
+const std::unordered_map<std::string, TokenType> keyword_map = {
+    {"SELECT", TokenType::KEYWORD}, {"FROM", TokenType::KEYWORD}, {"WHERE", TokenType::KEYWORD}, 
+    {"INSERT", TokenType::KEYWORD}, {"INTO", TokenType::KEYWORD}, {"VALUES", TokenType::KEYWORD}, 
+    {"UPDATE", TokenType::KEYWORD}, {"SET", TokenType::KEYWORD}, {"DELETE", TokenType::KEYWORD}, 
+    {"CREATE", TokenType::KEYWORD}, {"TABLE", TokenType::KEYWORD}, {"DROP", TokenType::KEYWORD}, 
+    {"ALTER", TokenType::KEYWORD}, {"ADD", TokenType::KEYWORD}, {"NULL", TokenType::KEYWORD}, 
+    {"ON", TokenType::KEYWORD}, {"IS", TokenType::KEYWORD}, {"JOIN", TokenType::KEYWORD}, 
+    {"INNER", TokenType::KEYWORD}, {"LEFT", TokenType::KEYWORD}, {"RIGHT", TokenType::KEYWORD}, 
+    {"FULL", TokenType::KEYWORD}, {"OUTER", TokenType::KEYWORD}, {"AS", TokenType::KEYWORD}, 
+    {"BY", TokenType::KEYWORD}, {"GROUP", TokenType::KEYWORD}, {"ORDER", TokenType::KEYWORD}, 
+    {"HAVING", TokenType::KEYWORD}, {"DISTINCT", TokenType::KEYWORD}, {"LIMIT", TokenType::KEYWORD}, 
+    {"OFFSET", TokenType::KEYWORD}, {"REFERENCES", TokenType::KEYWORD}, {"EXISTS", TokenType::KEYWORD}, 
+    {"AND", TokenType::KEYWORD}, {"OR", TokenType::KEYWORD}, {"NOT", TokenType::KEYWORD}, 
+    {"IN", TokenType::KEYWORD}, {"LIKE", TokenType::KEYWORD}, {"BETWEEN", TokenType::KEYWORD}, 
+    {"ALL", TokenType::KEYWORD}, {"ANY", TokenType::KEYWORD}
 };
 
-const std::unordered_set<std::string> operators = {
-    "+", "-", "*", "/", "=", "<", ">", "<=", ">=", "<>", "!=", "&&", "||", "!",
+const std::unordered_map<std::string, TokenType> operator_map = {
+    {"+", TokenType::OPERATOR}, {"-", TokenType::OPERATOR}, {"*", TokenType::OPERATOR}, 
+    {"/", TokenType::OPERATOR}, {"=", TokenType::OPERATOR}, {"<", TokenType::OPERATOR}, 
+    {">", TokenType::OPERATOR}, {"<=", TokenType::OPERATOR}, {">=", TokenType::OPERATOR}, 
+    {"<>", TokenType::OPERATOR}, {"!=", TokenType::OPERATOR}, {"&&", TokenType::OPERATOR}, 
+    {"||", TokenType::OPERATOR}, {"!", TokenType::OPERATOR}
 };
 
-const std::unordered_set<std::string> punctuation = {",", ";", "(", ")", "."};
-
-const std::unordered_set<std::string> datatypes = {
-    "NUMBER","INT", "VARCHAR", "CHAR", "TEXT", "FLOAT", "DOUBLE", "DATE", "BOOLEAN", "STRING"
+const std::unordered_map<std::string, TokenType> punctuation_map = {
+    {",", TokenType::PUNCTUATION}, {";", TokenType::PUNCTUATION}, {"(", TokenType::PUNCTUATION}, 
+    {")", TokenType::PUNCTUATION}, {".", TokenType::PUNCTUATION}
 };
 
-// Define multi-word constraints
-const std::unordered_map<std::string, std::string> multi_word_constraints = {
-    {"PRIMARY KEY", "PRIMARY_KEY"},
-    {"NOT NULL", "NOT_NULL"},
-    {"FOREIGN KEY", "FOREIGN_KEY"}
+const std::unordered_map<std::string, TokenType> datatype_map = {
+    {"NUMBER", TokenType::DATATYPE}, {"INT", TokenType::DATATYPE}, {"VARCHAR", TokenType::DATATYPE}, 
+    {"CHAR", TokenType::DATATYPE}, {"TEXT", TokenType::DATATYPE}, {"FLOAT", TokenType::DATATYPE}, 
+    {"DOUBLE", TokenType::DATATYPE}, {"DATE", TokenType::DATATYPE}, {"BOOLEAN", TokenType::DATATYPE}, 
+    {"STRING", TokenType::DATATYPE}
 };
 
-// Helper function: Convert a string to uppercase
-std::string to_upper(const std::string& str) {
-    std::string upper_str = str;
-    std::transform(upper_str.begin(), upper_str.end(), upper_str.begin(), ::toupper);
-    return upper_str;
+const std::unordered_map<std::string, TokenType> constraint_map = {
+    {"PRIMARY KEY", TokenType::CONSTRAINT}, {"NOT NULL", TokenType::CONSTRAINT}, 
+    {"FOREIGN KEY", TokenType::CONSTRAINT}, {"UNIQUE", TokenType::CONSTRAINT}, 
+    {"CHECK", TokenType::CONSTRAINT}, {"DEFAULT", TokenType::CONSTRAINT}
+};
+
+inline std::string toUpper(const std::string& str) {
+    std::string result = str;
+    std::transform(result.begin(), result.end(), result.begin(), ::toupper);
+    return result;
 }
 
-// Check if a string is a keyword
-bool is_keyword(const std::string& str) {
-    return keywords.find(to_upper(str)) != keywords.end();
+bool lexer::isValidIdentifier(const std::string& str) {
+    if (str.empty()) return false;
+    
+    if (keyword_map.find(toUpper(str)) != keyword_map.end()) return false;
+    
+    if (!std::isalpha(str[0]) && str[0] != '_') return false;
+    
+    return std::all_of(str.begin() + 1, str.end(), 
+                      [](char c) { return std::isalnum(c) || c == '_'; });
 }
 
-// Check if a string is an operator
-bool is_operator(const std::string& str) {
-    return operators.find(str) != operators.end();
+bool lexer::isNumeric(const std::string& str) {
+    if (str.empty()) return false;
+    size_t start = (str[0] == '-' || str[0] == '+') ? 1 : 0;
+    if (start >= str.size()) return false;
+    return std::all_of(str.begin() + start, str.end(), ::isdigit);
 }
 
-// Check if a string is punctuation
-bool is_punctuation(const std::string& str) {
-    return punctuation.find(str) != punctuation.end();
+bool lexer::isFloatingPoint(const std::string& str) {
+    if (str.empty()) return false;
+    bool hasDecimal = false;
+    size_t start = (str[0] == '-' || str[0] == '+') ? 1 : 0;
+    if (start >= str.size()) return false;
+    
+    for (size_t i = start; i < str.size(); ++i) {
+        if (str[i] == '.') {
+            if (hasDecimal) return false; 
+            hasDecimal = true;
+        } else if (!std::isdigit(str[i])) {
+            return false;
+        }
+    }
+    return hasDecimal; 
 }
 
-// Check if a string is a datatype
-bool is_datatype(const std::string& str) {
-    return datatypes.find(to_upper(str)) != datatypes.end();
-}
-
-// Check if a string is a valid identifier
-bool is_identifier(const std::string& str) {
-    if (str.empty() || is_keyword(str)) return false;
-    if (!isalpha(str[0]) && str[0] != '_') return false;
-    for (char ch : str) {
-        if (!isalnum(ch) && ch != '_') return false;
+bool lexer::isDateFormat(const std::string& str) {
+    if (str.size() != 10) return false; // YYYY-MM-DD format
+    if (str[4] != '-' || str[7] != '-') return false;
+    
+    // Check if year, month, day are numeric
+    for (size_t i = 0; i < str.size(); ++i) {
+        if (i == 4 || i == 7) continue; // Skip dashes
+        if (!std::isdigit(str[i])) return false;
     }
     return true;
 }
 
-// Check if a string is a number
-bool is_number(const std::string& str) {
-    return !str.empty() && std::all_of(str.begin(), str.end(), ::isdigit);
+bool lexer::isStringLiteral(const std::string& str) {
+    if (str.size() < 2) return false;
+    if (str.front() != '\'' || str.back() != '\'') return false;
+    
+    std::string content = str.substr(1, str.size() - 2);
+    return !isDateFormat(content); 
 }
 
-// Check if a string is a string literal
-bool is_string_literal(const std::string& str) {
-    return str.size() >= 2 && str.front() == '\'' && str.back() == '\'';
-}
 
-bool is_double(const std::string& str) {
-    bool decimalPointSeen = false;
-    int start = (str[0] == '-' || str[0] == '+') ? 1 : 0;
-    for (size_t i = start; i < str.size(); ++i) {
-        if (str[i] == '.') {
-            if (decimalPointSeen) return false; // More than one decimal point
-            decimalPointSeen = true;
-        } else if (!isdigit(str[i])) {
-            return false; // Non-digit character
+std::pair<bool, std::string> lexer::checkMultiWordConstraint(const std::string& currentToken, const std::string& input, size_t currentPos) {
+    std::string upperCurrent = toUpper(currentToken);
+    
+    if (upperCurrent == "PRIMARY" || upperCurrent == "NOT" || upperCurrent == "FOREIGN") {
+        
+        size_t i = currentPos;
+        while (i < input.size() && std::isspace(input[i])) i++;
+        
+        std::string nextToken;
+        while (i < input.size() && !std::isspace(input[i]) && 
+               punctuation_map.find(std::string(1, input[i])) == punctuation_map.end()) {
+            nextToken += input[i];
+            i++;
+        }
+        
+        if (!nextToken.empty()) {
+            std::string multiWord = upperCurrent + " " + toUpper(nextToken);
+            if (constraint_map.find(multiWord) != constraint_map.end()) {
+                return {true, multiWord};
+            }
         }
     }
-    return decimalPointSeen; 
+    
+    return {false, ""};
 }
 
-// Classify a token
-std::pair<std::string, std::string> classify_token(const std::string& token) {
-    if (keywords.find(to_upper(token)) != keywords.end()) {
-        return {"keyword", to_upper(token)};
-    } else if (is_operator(token)) {
-        return {"operator", token};
-    }else if (is_double(token)) {
-        return {"double", token};
+Token lexer::classifyToken(const std::string& tokenStr, size_t position, size_t line, size_t column) {
+    if (tokenStr.empty()) {
+        return Token(TokenType::UNKNOWN, "", position, line, column);
     }
-     else if (is_punctuation(token)) {
-        return {"punctuation", token};
-    } else if (is_number(token)) {
-        return {"number", token};
-    }else if (is_string_literal(token)) {
-        return {"string", token};
-    } else if (is_datatype(token)) {
-        return {"datatype", to_upper(token)};
-    } 
-    else if (is_identifier(token)) {
-        return {"identifier", token};
-    } else {
-        return {"unknown", token};
+    
+    std::string upperToken = toUpper(tokenStr);
+    
+    
+    auto operatorIt = operator_map.find(tokenStr);
+    if (operatorIt != operator_map.end()) {
+        return Token(TokenType::OPERATOR, tokenStr, position, line, column);
     }
+     
+    auto punctIt = punctuation_map.find(tokenStr);
+    if (punctIt != punctuation_map.end()) {
+        return Token(TokenType::PUNCTUATION, tokenStr, position, line, column);
+    }
+    
+    auto constraintIt = constraint_map.find(upperToken);
+    if (constraintIt != constraint_map.end()) {
+        return Token(TokenType::CONSTRAINT, upperToken, tokenStr, position, line, column);
+    }
+    
+    auto keywordIt = keyword_map.find(upperToken);
+    if (keywordIt != keyword_map.end()) {
+        return Token(TokenType::KEYWORD, upperToken, tokenStr, position, line, column);
+    }
+    
+    auto datatypeIt = datatype_map.find(upperToken);
+    if (datatypeIt != datatype_map.end()) {
+        return Token(TokenType::DATATYPE, upperToken, tokenStr, position, line, column);
+    }
+    
+    if (isFloatingPoint(tokenStr)) {
+        return Token(TokenType::DOUBLE, tokenStr, position, line, column);
+    }
+    
+    if (isNumeric(tokenStr)) {
+        return Token(TokenType::NUMBER, tokenStr, position, line, column);
+    }
+    
+    if (isStringLiteral(tokenStr)) {
+        return Token(TokenType::STRING, tokenStr, position, line, column);
+    }
+    
+    if (tokenStr.size() >= 2 && tokenStr.front() == '\'' && tokenStr.back() == '\'') {
+        std::string content = tokenStr.substr(1, tokenStr.size() - 2);
+        if (isDateFormat(content)) {
+            return Token(TokenType::DATE, tokenStr, position, line, column);
+        }
+    }
+    
+    if (isValidIdentifier(tokenStr)) {
+        return Token(TokenType::IDENTIFIER, tokenStr, position, line, column);
+    }
+    
+    return Token(TokenType::UNKNOWN, tokenStr, position, line, column);
 }
-
-// Tokenize the input query
-std::vector<std::pair<std::string, std::string>> lexer::getlexer(const std::string& input) {
-    std::vector<std::pair<std::string, std::string>> tokens;
-    std::string current_token;
-
+    
+std::vector<Token> lexer::tokenize(const std::string& input) {
+    std::vector<Token> tokens;
+    tokens.reserve(input.size() / 4);
+    
+    std::string currentToken;
+    size_t position = 0;
+    size_t line = 1;
+    size_t column = 1;
+    
     for (size_t i = 0; i < input.size(); ++i) {
         char ch = input[i];
-
-        // Handle whitespace
-        if (isspace(ch)) {
-            if (!current_token.empty()) {
-                // Check if the current token is a keyword
-                if (is_keyword(current_token)) {
-                    tokens.push_back({"keyword", to_upper(current_token)});
-                } else {
-                    tokens.push_back(classify_token(current_token));
+        
+        if (ch == '\n') {
+            line++;
+            column = 1;
+        } else {
+            column++;
+        }
+        
+        if (std::isspace(ch)) {
+            if (!currentToken.empty()) {
+                auto [isMultiWord, constraintStr] = checkMultiWordConstraint(currentToken, input, i);
+                if (isMultiWord) {
+                    size_t nextTokenStart = i;
+                    while (nextTokenStart < input.size() && std::isspace(input[nextTokenStart])) nextTokenStart++;
+                    
+                    std::string nextToken;
+                    size_t nextTokenEnd = nextTokenStart;
+                    while (nextTokenEnd < input.size() && !std::isspace(input[nextTokenEnd]) && 
+                           punctuation_map.find(std::string(1, input[nextTokenEnd])) == punctuation_map.end()) {
+                        nextToken += input[nextTokenEnd];
+                        nextTokenEnd++;
+                    }
+                    
+                    if (!nextToken.empty()) {
+                        tokens.push_back(Token(TokenType::CONSTRAINT, constraintStr, 
+                                             currentToken + " " + nextToken, position, line, column - currentToken.size()));
+                        currentToken.clear();
+                        
+                        i = nextTokenEnd - 1;
+                        continue;
+                    }
                 }
-                current_token.clear();
+                
+                tokens.push_back(classifyToken(currentToken, position, line, column - currentToken.size()));
+                currentToken.clear();
             }
             continue;
         }
-
-        // Handle multi-character operators
+        
         if (i + 1 < input.size()) {
-            std::string two_char_op = std::string(1, ch) + input[i + 1];
-            if (is_operator(two_char_op)) {
-                if (!current_token.empty()) {
-                    // Check if the current token is a keyword
-                    if (is_keyword(current_token)) {
-                        tokens.push_back({"keyword", to_upper(current_token)});
-                    } else {
-                        tokens.push_back(classify_token(current_token));
-                    }
-                    current_token.clear();
+            std::string twoChar = std::string(1, ch) + input[i + 1];
+            if (operator_map.find(twoChar) != operator_map.end()) {
+                if (!currentToken.empty()) {
+                    tokens.push_back(classifyToken(currentToken, position, line, column - currentToken.size()));
+                    currentToken.clear();
                 }
-                tokens.push_back({"operator", two_char_op});
-                i++; // Skip the next character
+                tokens.push_back(Token(TokenType::OPERATOR, twoChar, position, line, column));
+                i++; 
+                column++;
                 continue;
             }
         }
-
-        // Handle double/float numbers
-        if (isdigit(ch) || (ch == '.' && !current_token.empty() && std::all_of(current_token.begin(), current_token.end(), ::isdigit))) {
-            current_token += ch;
-            continue;
-        }
-
-        // Handle string literals
+        
+        
         if (ch == '\'') {
-            if (!current_token.empty()) {
-                tokens.push_back(classify_token(current_token));
-                current_token.clear();
+            if (!currentToken.empty()) {
+                tokens.push_back(classifyToken(currentToken, position, line, column - currentToken.size()));
+                currentToken.clear();
             }
-            current_token += ch;
+            
+            std::string stringLiteral(1, ch);
             i++;
+            column++;
+            
+            
             while (i < input.size() && input[i] != '\'') {
-                current_token += input[i];
+                stringLiteral += input[i];
+                if (input[i] == '\n') {
+                    line++;
+                    column = 1;
+                } else {
+                    column++;
+                }
                 i++;
             }
+            
             if (i < input.size()) {
-                current_token += input[i]; // Add closing quote
+                stringLiteral += input[i]; 
+                column++;
+            } else {
+    
+                tokens.push_back(Token(TokenType::ERROR, "unclosed_string_literal", position, line, column));
+                continue;
             }
-            tokens.push_back(classify_token(current_token));
-            current_token.clear();
+            
+            tokens.push_back(classifyToken(stringLiteral, position, line, column - stringLiteral.size()));
             continue;
         }
-
-        // Handle punctuation
-        if (punctuation.find(std::string(1, ch)) != punctuation.end()) {
-            if (!current_token.empty()) {
-                tokens.push_back(classify_token(current_token));
-                current_token.clear();
+        
+        std::string singleChar(1, ch);
+        if (punctuation_map.find(singleChar) != punctuation_map.end()) {
+            if (!currentToken.empty()) {
+                tokens.push_back(classifyToken(currentToken, position, line, column - currentToken.size()));
+                currentToken.clear();
             }
-            tokens.push_back({"punctuation", std::string(1, ch)});
+            tokens.push_back(Token(TokenType::PUNCTUATION, singleChar, position, line, column));
             continue;
         }
-
-        // Accumulate characters for identifiers, numbers, etc.
-        current_token += ch;
-        std::cout << "Current token: " << current_token << std::endl;
+        
+        if (operator_map.find(singleChar) != operator_map.end()) {
+            if (!currentToken.empty()) {
+                tokens.push_back(classifyToken(currentToken, position, line, column - currentToken.size()));
+                currentToken.clear();
+            }
+            tokens.push_back(Token(TokenType::OPERATOR, singleChar, position, line, column));
+            continue;
+        }
+        currentToken += ch;
     }
-
-    // Add the last token if any
-    if (!current_token.empty()) {
-        tokens.push_back(classify_token(current_token));
+    
+    if (!currentToken.empty()) {
+        tokens.push_back(classifyToken(currentToken, position, line, column - currentToken.size()));
     }
-
+    
     return tokens;
+}
+
+std::vector<std::pair<std::string, std::string>> lexer::getlexer(const std::string& input) {
+    std::vector<Token> modernTokens = tokenize(input);
+    std::vector<std::pair<std::string, std::string>> legacyTokens;
+    legacyTokens.reserve(modernTokens.size());
+    
+    for (const auto& token : modernTokens) {
+        legacyTokens.emplace_back(tokenTypeToString(token.type), token.value);
+    }
+    
+    return legacyTokens;
 }
