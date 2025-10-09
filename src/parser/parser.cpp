@@ -5,452 +5,945 @@
 #include <functional>
 #include "../../include/parser/parser.hpp"
 
-// Helper function to check if a token matches a specific type and value
-bool parser::isToken(const std::pair<std::string, std::string>& token, const std::string& type, const std::string& value = "") {
-    return token.first == type && (value.empty() || token.second == value);
-}
-
-// Recursive subquery handler
-bool parser::handleSubquery(const std::vector<std::pair<std::string, std::string>>& tokens, size_t& i, queryStructure& parentQuery, astNode* parentNode) {
-    if (i < tokens.size() && tokens[i].second == "(" && i + 1 < tokens.size() && isToken(tokens[i + 1], "keyword", "SELECT")) {
-        i++; // Skip '('
-        queryStructure subQuery;
-        std::cout << "Parsing subquery..." << std::endl;
-        parse(tokens, i, subQuery, parentNode); // Recursive parse
-        parentQuery.subqueries.push_back(subQuery);
-
-        // Skip until the closing parenthesis
-        while (i < tokens.size() && tokens[i].second != ")") i++;
-        if (i < tokens.size() && tokens[i].second == ")") i++; // Skip ')'
+bool isTableColumn(const std::vector<Token>& tokens, int index) {
+    if (index + 2 < tokens.size() &&
+        tokens[index].type == TokenType::IDENTIFIER &&
+        tokens[index + 1].type == TokenType::PUNCTUATION && tokens[index + 1].value == "." &&
+        tokens[index + 2].type == TokenType::IDENTIFIER) {
         return true;
     }
     return false;
+    
+}
+
+// Helper function to check if a token matches a specific type and value
+bool parser::isToken(const Token& token, TokenType type, const std::string& value = "") {}
+
+// Recursive subquery handler
+bool parser::handleSubquery(const std::vector<Token>& tokens, astNode* parentNode) {
+
 }
 
 // ---------------- SELECT ----------------
-void parser::parseSelect(const std::vector<std::pair<std::string, std::string>>& tokens, size_t& i, queryStructure& storedQuery, astNode* parentNode) {
-    std::cout << "Parsing SELECT query..." << std::endl;
-
-    // Add a COLUMNS node to the AST
-    astNode* columnsNode = new astNode("COLUMNS", "");
-    parentNode->addChild(columnsNode, "keyword"); // "keyword" as the type for the COLUMNS node
-
-    // Parse columns
-    while (i < tokens.size() && !isToken(tokens[i], "keyword", "FROM")) {
-        if (tokens[i].first == "identifier" && i + 2 < tokens.size() &&
-            tokens[i + 1].second == "." && tokens[i + 2].first == "identifier") {
-            // Handle dot notation (e.g., u.name)
-            std::string aliasOrTable = tokens[i].second;
-            std::string columnName = tokens[i + 2].second;
-            std::cout << "Alias/Table: " << aliasOrTable << ", Column: " << columnName << std::endl;
-
-            // Add to AST or query structure
-            astNode* columnNode = new astNode("COLUMN", aliasOrTable + "." + columnName);
-            columnsNode->addChild(columnNode, tokens[i + 2].first); // Pass the token type of the column (e.g., "identifier")
-            storedQuery.columns.push_back(aliasOrTable + "." + columnName);
-
-            // Advance the index
-            i += 3;
-        }else if(tokens[i].first == "identifier") {
-            std::string columnName = tokens[i].second;
-            std::cout << "Column: " << columnName << std::endl;
-
-            // Add to AST or query structure
-            astNode* columnNode = new astNode("COLUMN", columnName);
-            columnsNode->addChild(columnNode, tokens[i].first); // Pass the token type of the column (e.g., "identifier")
-            storedQuery.columns.push_back(columnName);
-
-            i++;
-        } else if (tokens[i].second == ",") {
-            i++; // Skip comma
-        } 
-        else {
-            std::cerr << "Error: Invalid column format in SELECT query." << std::endl;
-            return;
-        }
+bool parser::parseSelect(const std::vector<Token>& tokens, astNode* parentNode) {
+    std::cout << "Parsing SELECT statement..." << std::endl;
+    
+    astNode* selectNode = new astNode("SELECT", "");
+    parentNode->addChild(selectNode);
+    
+    itr += 1; // Skip SELECT keyword
+    
+    // Handle DISTINCT
+    if (itr.getVal() < tokens.size() && 
+        tokens[itr.getVal()].type == TokenType::KEYWORD && 
+        tokens[itr.getVal()].value == "DISTINCT") {
+        std::cout << "DISTINCT found" << std::endl;
+        selectNode->addChild(new astNode("DISTINCT", "DISTINCT"));
+        itr += 1;
     }
-
-    // Add a FROM node to the AST
-    if (i < tokens.size() && isToken(tokens[i], "keyword", "FROM")) {
-        i++; // Skip "FROM"
-        astNode* fromNode = new astNode("FROM", "");
-        parentNode->addChild(fromNode, "keyword"); // "keyword" as the type for the FROM node
-
-        // Parse table
-        if (i < tokens.size() && tokens[i].first == "identifier") {
-            std::string tableName = tokens[i].second;
-            astNode* tableNode = new astNode("TABLE", tableName);
-            fromNode->addChild(tableNode, tokens[i].first); // Pass the token type of the table (e.g., "identifier")
-            std::cout << "Table: " << tableName << std::endl;
-            i++;
+    
+    // Parse SELECT list
+    astNode* selectListNode = new astNode("SELECT_LIST", "");
+    selectNode->addChild(selectListNode);
+    
+    if (!parseSelectList(tokens, selectListNode)) {
+        std::cout << "Error: Failed to parse SELECT list" << std::endl;
+        return false;
+    }
+    
+    // Expect FROM keyword
+    if (itr.getVal() >= tokens.size() || 
+        tokens[itr.getVal()].type != TokenType::KEYWORD || 
+        tokens[itr.getVal()].value != "FROM") {
+        std::cout << "Error: Expected FROM keyword" << std::endl;
+        return false;
+    }
+    
+    itr += 1; // Skip FROM
+    
+    // Parse FROM clause
+    astNode* fromNode = new astNode("FROM", "");
+    selectNode->addChild(fromNode);
+    
+    if (!parseFromClause(tokens, fromNode)) {
+        std::cout << "Error: Failed to parse FROM clause" << std::endl;
+        return false;
+    }
+    
+    // Parse optional clauses
+    while (itr.getVal() < tokens.size()) {
+        const Token& currentToken = tokens[itr.getVal()];
+        
+        if (currentToken.type == TokenType::KEYWORD) {
+            if (currentToken.value == "WHERE") {
+                std::cout << "Parsing WHERE clause..." << std::endl;
+                astNode* whereNode = new astNode("WHERE", "");
+                selectNode->addChild(whereNode);
+                itr += 1;
+                
+                if (!parseCondition(tokens, whereNode)) {
+                    return false;
+                }
+            } else if (currentToken.value == "GROUP") {
+                if (!parseGroupBy(tokens, selectNode)) {
+                    return false;
+                }
+            } else if (currentToken.value == "HAVING") {
+                if (!parseHaving(tokens, selectNode)) {
+                    return false;
+                }
+            } else if (currentToken.value == "ORDER") {
+                if (!parseOrderBy(tokens, selectNode)) {
+                    return false;
+                }
+            } else if (currentToken.value == "LIMIT") {
+                if (!parseLimit(tokens, selectNode)) {
+                    return false;
+                }
+            } else {
+                break; // Unknown keyword, stop parsing
+            }
         } else {
-            std::cerr << "Error: Missing table name in SELECT query." << std::endl;
-            return;
+            break; // Not a keyword, stop parsing
         }
+    }
+    
+    return true;
+}
+
+// Parse SELECT list (columns, expressions, functions)
+bool parser::parseSelectList(const std::vector<Token>& tokens, astNode* parentNode) {
+    do {
+        astNode* columnNode = new astNode("COLUMN_EXPR", "");
+        parentNode->addChild(columnNode);
+        
+        if (!parseSelectExpression(tokens, columnNode)) {
+            std::cout << "Error: Failed to parse SELECT expression" << std::endl;
+            return false;
+        }
+        
+        // Check for alias (AS keyword or direct identifier)
+        if (itr.getVal() < tokens.size()) {
+            const Token& nextToken = tokens[itr.getVal()];
+            
+            if (nextToken.type == TokenType::KEYWORD && nextToken.value == "AS") {
+                itr += 1;
+                if (itr.getVal() < tokens.size() && 
+                    tokens[itr.getVal()].type == TokenType::IDENTIFIER) {
+                    std::cout << "Column alias: " << tokens[itr.getVal()].value << std::endl;
+                    columnNode->addChild(new astNode("ALIAS", tokens[itr.getVal()].value));
+                    itr += 1;
+                }
+            } else if (nextToken.type == TokenType::IDENTIFIER && 
+                       !isTableColumn(tokens, itr.getVal()) &&
+                       (itr.getVal() + 1 >= tokens.size() || 
+                        tokens[itr.getVal() + 1].value == "," || 
+                        tokens[itr.getVal() + 1].value == "FROM")) {
+                // Direct alias without AS
+                std::cout << "Column alias (no AS): " << nextToken.value << std::endl;
+                columnNode->addChild(new astNode("ALIAS", nextToken.value));
+                itr += 1;
+            }
+        }
+        
+        // Check for comma
+        if (itr.getVal() < tokens.size() && 
+            tokens[itr.getVal()].type == TokenType::PUNCTUATION && 
+            tokens[itr.getVal()].value == ",") {
+            itr += 1;
+        } else {
+            break; // No more columns
+        }
+    } while (itr.getVal() < tokens.size());
+    
+    return true;
+}
+
+// Parse individual SELECT expression (column, function, literal, etc.)
+bool parser::parseSelectExpression(const std::vector<Token>& tokens, astNode* parentNode) {
+    if (itr.getVal() >= tokens.size()) {
+        return false;
+    }
+    
+    const Token& currentToken = tokens[itr.getVal()];
+    
+    // Handle wildcard (*)
+    if (currentToken.type == TokenType::OPERATOR && currentToken.value == "*") {
+        std::cout << "Wildcard (*) found" << std::endl;
+        parentNode->addChild(new astNode("WILDCARD", "*"));
+        itr += 1;
+        return true;
+    }
+    
+    // Handle aggregate functions
+    if (currentToken.type == TokenType::IDENTIFIER && 
+        (currentToken.value == "COUNT" || currentToken.value == "SUM" || 
+         currentToken.value == "AVG" || currentToken.value == "MIN" || 
+         currentToken.value == "MAX")) {
+        return parseAggregateFunction(tokens, parentNode);
+    }
+    
+    // Handle table.column or simple column
+    if (isTableColumn(tokens, itr.getVal())) {
+        std::cout << "Table.column: " << tokens[itr.getVal()].value << "." << tokens[itr.getVal() + 2].value << std::endl;
+        parentNode->addChild(new astNode("COLUMN", tokens[itr.getVal()].value + "." + tokens[itr.getVal() + 2].value));
+        itr += 3;
+        return true;
+    }
+    
+    // Handle simple column or expression
+    if (!parseValue(tokens, parentNode)) {
+        std::cout << "Error: Expected column name or expression" << std::endl;
+        return false;
+    }
+    
+    return true;
+}
+
+// Parse aggregate functions
+bool parser::parseAggregateFunction(const std::vector<Token>& tokens, astNode* parentNode) {
+    const Token& functionToken = tokens[itr.getVal()];
+    std::cout << "Aggregate function: " << functionToken.value << std::endl;
+    
+    astNode* functionNode = new astNode("FUNCTION", functionToken.value);
+    parentNode->addChild(functionNode);
+    itr += 1;
+    
+    // Expect opening parenthesis
+    if (itr.getVal() >= tokens.size() || 
+        tokens[itr.getVal()].type != TokenType::PUNCTUATION || 
+        tokens[itr.getVal()].value != "(") {
+        std::cout << "Error: Expected '(' after function name" << std::endl;
+        return false;
+    }
+    itr += 1;
+    
+    // Parse function arguments
+    astNode* argsNode = new astNode("ARGS", "");
+    functionNode->addChild(argsNode);
+    
+    // Handle special case: COUNT(*)
+    if (itr.getVal() < tokens.size() && 
+        tokens[itr.getVal()].type == TokenType::OPERATOR && 
+        tokens[itr.getVal()].value == "*") {
+        std::cout << "Function argument: *" << std::endl;
+        argsNode->addChild(new astNode("WILDCARD", "*"));
+        itr += 1;
     } else {
-        std::cerr << "Error: Missing FROM clause in SELECT query." << std::endl;
-        return;
+        // Parse column or expression
+        if (!parseValue(tokens, argsNode)) {
+            std::cout << "Error: Expected function argument" << std::endl;
+            return false;
+        }
     }
-
-    // Add a WHERE node to the AST (if applicable)
-    if (i < tokens.size() && isToken(tokens[i], "keyword", "WHERE")) {
-        i++; // Skip "WHERE"
-        astNode* whereNode = new astNode("WHERE", "");
-        parentNode->addChild(whereNode, "keyword"); // "keyword" as the type for the WHERE node
-
-        // Parse conditions
-        parseCondition(tokens, i, storedQuery, whereNode);
+    
+    // Expect closing parenthesis
+    if (itr.getVal() >= tokens.size() || 
+        tokens[itr.getVal()].type != TokenType::PUNCTUATION || 
+        tokens[itr.getVal()].value != ")") {
+        std::cout << "Error: Expected ')' after function arguments" << std::endl;
+        return false;
     }
+    itr += 1;
+    
+    return true;
+}
+
+// Parse FROM clause with JOIN support
+bool parser::parseFromClause(const std::vector<Token>& tokens, astNode* parentNode) {
+    // Parse first table
+    if (!parseTableReference(tokens, parentNode)) {
+        return false;
+    }
+    
+    // Parse optional JOINs
+    while (itr.getVal() < tokens.size()) {
+        const Token& currentToken = tokens[itr.getVal()];
+        
+        if (currentToken.type == TokenType::KEYWORD && 
+            (currentToken.value == "JOIN" || currentToken.value == "INNER" || 
+             currentToken.value == "LEFT" || currentToken.value == "RIGHT" || 
+             currentToken.value == "FULL")) {
+            if (!parseJoinClause(tokens, parentNode)) {
+                return false;
+            }
+        } else {
+            break; // No more JOINs
+        }
+    }
+    
+    return true;
+}
+
+// Parse table reference (table name with optional alias)
+bool parser::parseTableReference(const std::vector<Token>& tokens, astNode* parentNode) {
+    if (itr.getVal() >= tokens.size() || 
+        tokens[itr.getVal()].type != TokenType::IDENTIFIER) {
+        std::cout << "Error: Expected table name" << std::endl;
+        return false;
+    }
+    
+    const Token& tableToken = tokens[itr.getVal()];
+    std::cout << "Table: " << tableToken.value << std::endl;
+    
+    astNode* tableNode = new astNode("TABLE", tableToken.value);
+    parentNode->addChild(tableNode);
+    itr += 1;
+    
+    // Check for table alias
+    if (itr.getVal() < tokens.size() && 
+        tokens[itr.getVal()].type == TokenType::IDENTIFIER &&
+        (itr.getVal() + 1 >= tokens.size() || 
+         (tokens[itr.getVal() + 1].type == TokenType::KEYWORD && 
+          (tokens[itr.getVal() + 1].value == "WHERE" || 
+           tokens[itr.getVal() + 1].value == "JOIN" || 
+           tokens[itr.getVal() + 1].value == "INNER" || 
+           tokens[itr.getVal() + 1].value == "LEFT" || 
+           tokens[itr.getVal() + 1].value == "RIGHT" || 
+           tokens[itr.getVal() + 1].value == "GROUP" || 
+           tokens[itr.getVal() + 1].value == "ORDER")))) {
+        std::cout << "Table alias: " << tokens[itr.getVal()].value << std::endl;
+        tableNode->addChild(new astNode("ALIAS", tokens[itr.getVal()].value));
+        itr += 1;
+    }
+    
+    return true;
+}
+
+// Parse JOIN clause
+bool parser::parseJoinClause(const std::vector<Token>& tokens, astNode* parentNode) {
+    astNode* joinNode = new astNode("JOIN", "");
+    parentNode->addChild(joinNode);
+    
+    std::string joinType = "";
+    
+    // Parse JOIN type
+    const Token& currentToken = tokens[itr.getVal()];
+    if (currentToken.value == "INNER" || currentToken.value == "LEFT" || 
+        currentToken.value == "RIGHT" || currentToken.value == "FULL") {
+        joinType = currentToken.value;
+        itr += 1;
+        
+        if (itr.getVal() < tokens.size() && 
+            tokens[itr.getVal()].type == TokenType::KEYWORD && 
+            tokens[itr.getVal()].value == "OUTER") {
+            joinType += " OUTER";
+            itr += 1;
+        }
+        
+        if (itr.getVal() >= tokens.size() || 
+            tokens[itr.getVal()].type != TokenType::KEYWORD || 
+            tokens[itr.getVal()].value != "JOIN") {
+            std::cout << "Error: Expected JOIN after " << joinType << std::endl;
+            return false;
+        }
+        joinType += " JOIN";
+    } else if (currentToken.value == "JOIN") {
+        joinType = "INNER JOIN";
+    }
+    
+    std::cout << "JOIN type: " << joinType << std::endl;
+    joinNode->addChild(new astNode("JOIN_TYPE", joinType));
+    itr += 1; // Skip JOIN keyword
+    
+    // Parse joined table
+    if (!parseTableReference(tokens, joinNode)) {
+        return false;
+    }
+    
+    // Parse ON condition
+    if (itr.getVal() >= tokens.size() || 
+        tokens[itr.getVal()].type != TokenType::KEYWORD || 
+        tokens[itr.getVal()].value != "ON") {
+        std::cout << "Error: Expected ON after JOIN table" << std::endl;
+        return false;
+    }
+    
+    std::cout << "Parsing JOIN ON condition..." << std::endl;
+    astNode* onNode = new astNode("ON", "");
+    joinNode->addChild(onNode);
+    itr += 1;
+    
+    return parseCondition(tokens, onNode);
+}
+
+// Parse GROUP BY clause
+bool parser::parseGroupBy(const std::vector<Token>& tokens, astNode* parentNode) {
+    std::cout << "Parsing GROUP BY clause..." << std::endl;
+    
+    // Expect GROUP BY
+    if (itr.getVal() + 1 >= tokens.size() || 
+        tokens[itr.getVal()].value != "GROUP" || 
+        tokens[itr.getVal() + 1].value != "BY") {
+        std::cout << "Error: Expected GROUP BY" << std::endl;
+        return false;
+    }
+    
+    astNode* groupByNode = new astNode("GROUP_BY", "");
+    parentNode->addChild(groupByNode);
+    itr += 2; // Skip GROUP BY
+    
+    // Parse column list
+    do {
+        if (!parseValue(tokens, groupByNode)) {
+            std::cout << "Error: Expected column in GROUP BY" << std::endl;
+            return false;
+        }
+        
+        if (itr.getVal() < tokens.size() && 
+            tokens[itr.getVal()].type == TokenType::PUNCTUATION && 
+            tokens[itr.getVal()].value == ",") {
+            itr += 1;
+        } else {
+            break;
+        }
+    } while (itr.getVal() < tokens.size());
+    
+    return true;
+}
+
+// Parse HAVING clause
+bool parser::parseHaving(const std::vector<Token>& tokens, astNode* parentNode) {
+    std::cout << "Parsing HAVING clause..." << std::endl;
+    
+    astNode* havingNode = new astNode("HAVING", "");
+    parentNode->addChild(havingNode);
+    itr += 1; // Skip HAVING
+    
+    return parseCondition(tokens, havingNode);
+}
+
+// Parse ORDER BY clause
+bool parser::parseOrderBy(const std::vector<Token>& tokens, astNode* parentNode) {
+    std::cout << "Parsing ORDER BY clause..." << std::endl;
+    
+    // Expect ORDER BY
+    if (itr.getVal() + 1 >= tokens.size() || 
+        tokens[itr.getVal()].value != "ORDER" || 
+        tokens[itr.getVal() + 1].value != "BY") {
+        std::cout << "Error: Expected ORDER BY" << std::endl;
+        return false;
+    }
+    
+    astNode* orderByNode = new astNode("ORDER_BY", "");
+    parentNode->addChild(orderByNode);
+    itr += 2; // Skip ORDER BY
+    
+    // Parse order expressions
+    do {
+        astNode* orderExprNode = new astNode("ORDER_EXPR", "");
+        orderByNode->addChild(orderExprNode);
+        
+        if (!parseValue(tokens, orderExprNode)) {
+            std::cout << "Error: Expected column in ORDER BY" << std::endl;
+            return false;
+        }
+        
+        // Check for ASC/DESC
+        if (itr.getVal() < tokens.size() && 
+            tokens[itr.getVal()].type == TokenType::IDENTIFIER &&
+            (tokens[itr.getVal()].value == "ASC" || tokens[itr.getVal()].value == "DESC")) {
+            std::cout << "Order direction: " << tokens[itr.getVal()].value << std::endl;
+            orderExprNode->addChild(new astNode("DIRECTION", tokens[itr.getVal()].value));
+            itr += 1;
+        }
+        
+        if (itr.getVal() < tokens.size() && 
+            tokens[itr.getVal()].type == TokenType::PUNCTUATION && 
+            tokens[itr.getVal()].value == ",") {
+            itr += 1;
+        } else {
+            break;
+        }
+    } while (itr.getVal() < tokens.size());
+    
+    return true;
+}
+
+// Parse LIMIT clause
+bool parser::parseLimit(const std::vector<Token>& tokens, astNode* parentNode) {
+    std::cout << "Parsing LIMIT clause..." << std::endl;
+    
+    astNode* limitNode = new astNode("LIMIT", "");
+    parentNode->addChild(limitNode);
+    itr += 1; // Skip LIMIT
+    
+    if (itr.getVal() >= tokens.size() || 
+        tokens[itr.getVal()].type != TokenType::NUMBER) {
+        std::cout << "Error: Expected number after LIMIT" << std::endl;
+        return false;
+    }
+    
+    std::cout << "Limit value: " << tokens[itr.getVal()].value << std::endl;
+    limitNode->addChild(new astNode("VALUE", tokens[itr.getVal()].value));
+    itr += 1;
+    
+    return true;
 }
 
 // ---------------- INSERT ----------------
-void parser::parseInsert(const std::vector<std::pair<std::string, std::string>>& tokens, size_t& i, queryStructure& storedQuery, astNode* parentNode) {
-    std::cout << "Parsing INSERT query..." << std::endl;
-
-    if (i + 1 < tokens.size() && isToken(tokens[i], "keyword", "INTO") && tokens[i + 1].first == "identifier") {
-        i++;
-        std::string tableName = tokens[i].second;
-        storedQuery.tableName = tableName;
-        astNode* tableNode = new astNode("TABLE", tableName);
-        parentNode->addChild(tableNode, "identifier"); // Provide the missing argument(s)
-        std::cout << "Table Name: " << tableName << std::endl;
-        i++;
-
-        // Parse column list
-        if (i < tokens.size() && tokens[i].second == "(") {
-            i++; // Skip '('
-            astNode* columnsNode = new astNode("COLUMNS", "");
-            tableNode->addChild(columnsNode, "keyword"); // Provide the missing argument(s)
-            while (i < tokens.size() && tokens[i].second != ")") {
-                if (tokens[i].first == "identifier") {
-                    columnsNode->addChild(new astNode("COLUMN", tokens[i].second), "identifier");
-                    storedQuery.columns.push_back(tokens[i].second);
-                    std::cout << "Column: " << tokens[i].second << std::endl;
-                }
-                i++;
-            }
-            if (i < tokens.size() && tokens[i].second == ")") i++; // Skip ')'
-        }
-
-        // Parse VALUES
-        if (i < tokens.size() && isToken(tokens[i], "keyword", "VALUES")) {
-            i++;
-            if (i < tokens.size() && tokens[i].second == "(") {
-                i++; // Skip '('
-                astNode* valuesNode = new astNode("VALUES", "");
-                tableNode->addChild(valuesNode, "keyword"); // Provide the missing argument(s)
-                while (i < tokens.size() && tokens[i].second != ")") {
-                    if (tokens[i].first == "string" || tokens[i].first == "number" || tokens[i].first == "double") {
-                        valuesNode->addChild(new astNode("VALUE", tokens[i].second), tokens[i].first); // Pass token type
-                        storedQuery.values.push_back(tokens[i].second);
-                        std::cout << "Value: " << tokens[i].second << std::endl;
-                        i++;
-                    }
-                }
-                if (i < tokens.size() && tokens[i].second == ")") i++; // Skip ')'
-            }
-        }
-    } else {
-        std::cerr << "Error: Expected INTO keyword and table name in INSERT query." << std::endl;
-    }
-}
+bool parser::parseInsert(const std::vector<Token>& tokens, astNode* parentNode) {}
 
 // ---------------- UPDATE ----------------
-void parser::parseUpdate(const std::vector<std::pair<std::string, std::string>>& tokens, size_t& i, queryStructure& storedQuery, astNode* parentNode) {
-    std::cout << "Parsing UPDATE query..." << std::endl;
-
-    // Parse table name
-    if (i < tokens.size() && tokens[i].first == "identifier") {
-        std::string tableName = tokens[i].second;
-        storedQuery.tableName = tableName;
-        astNode* tableNode = new astNode("TABLE", tableName);
-        parentNode->addChild(tableNode, tokens[i].first); // Pass token type
-        std::cout << "Table Name: " << tableName << std::endl;
-        i++;
-    } else {
-        std::cerr << "Error: Expected table name in UPDATE query." << std::endl;
-        return;
-    }
-
-    // Parse SET clause
-    if (i < tokens.size() && isToken(tokens[i], "keyword", "SET")) {
-        i++; // Skip "SET"
-        astNode* setNode = new astNode("SET", "");
-        parentNode->addChild(setNode, "keyword"); // "keyword" as the type for the SET node
-
-        // Parse assignments
-        while (i < tokens.size() && !isToken(tokens[i], "keyword", "WHERE")) {
-            if (tokens[i].first == "identifier" && i + 1 < tokens.size() && tokens[i + 1].second == "=") {
-                // Parse column (LEFT)
-                std::string columnName = tokens[i].second;
-                astNode* leftNode = new astNode("LEFT", "COLUMN(" + columnName + ")");
-                setNode->addChild(leftNode, tokens[i].first); // Pass token type for column
-                i++; // Skip column name
-
-                // Parse operator (OPERATOR)
-                if (tokens[i].second == "=") {
-                    astNode* operatorNode = new astNode("OPERATOR", "=");
-                    setNode->addChild(operatorNode, "operator"); // "operator" as the type
-                    i++; // Skip "="
-                } else {
-                    std::cerr << "Error: Expected '=' in SET clause." << std::endl;
-                    return;
-                }
-
-                // Parse value (RIGHT)
-                if (i < tokens.size() && (tokens[i].first == "number" || tokens[i].first == "string")) {
-                    std::string value = tokens[i].second;
-                    astNode* rightNode = new astNode("RIGHT", "VALUE(" + value + ")");
-                    setNode->addChild(rightNode, tokens[i].first); // Pass token type for value
-                    storedQuery.values.push_back(value);
-                    i++; // Skip value
-                } else {
-                    std::cerr << "Error: Expected value in SET clause." << std::endl;
-                    return;
-                }
-
-                // Handle comma (if multiple assignments)
-                if (i < tokens.size() && tokens[i].second == ",") {
-                    i++; // Skip ","
-                }
-            } else {
-                std::cerr << "Error: Invalid assignment in SET clause." << std::endl;
-                return;
-            }
-        }
-    } else {
-        std::cerr << "Error: Missing SET clause in UPDATE query." << std::endl;
-        return;
-    }
-
-    // Parse WHERE clause
-    if (i < tokens.size() && isToken(tokens[i], "keyword", "WHERE")) {
-        i++; // Skip "WHERE"
-        astNode* whereNode = new astNode("WHERE", "");
-        parentNode->addChild(whereNode, "keyword"); // "keyword" as the type for the WHERE node
-
-        // Parse the condition
-        parseCondition(tokens, i, storedQuery, whereNode);
-    }
-}
+bool parser::parseUpdate(const std::vector<Token>& tokens, astNode* parentNode) {}
 
 // ---------------- DELETE ----------------
-void parser::parseDelete(const std::vector<std::pair<std::string, std::string>>& tokens, size_t& i, queryStructure& storedQuery, astNode* parentNode) {
-    std::cout << "Parsing DELETE query..." << std::endl;
-
-    if (i < tokens.size() && isToken(tokens[i], "keyword", "FROM")) {
-        i++;
-        if (i < tokens.size() && tokens[i].first == "identifier") {
-            std::string tableName = tokens[i].second;
-            storedQuery.tableName = tableName;
-            astNode* tableNode = new astNode("TABLE", tableName);
-            parentNode->addChild(tableNode, "identifier"); // Provide the missing argument(s)
-            std::cout << "Table Name: " << tableName << std::endl;
-            i++;
-        } else {
-            std::cerr << "Error: Expected table name after FROM." << std::endl;
-        }
-    }
-
-    // Parse WHERE clause
-    if (i < tokens.size() && isToken(tokens[i], "keyword", "WHERE")) {
-        i++;
-        astNode* whereNode = new astNode("WHERE", "");
-        parentNode->addChild(whereNode, "keyword"); // "keyword" as the type for the WHERE node
-
-        // Parse the condition
-        parseCondition(tokens, i, storedQuery, whereNode);
-    }
-}
-
-// ---------------- CREATE ----------------
-void parser::parseCreate(const std::vector<std::pair<std::string, std::string>>& tokens, size_t& i, queryStructure& storedQuery, astNode* parentNode) {
-    std::cout << "Parsing CREATE TABLE query..." << std::endl;
-
-    if (i + 1 < tokens.size() && isToken(tokens[i], "keyword", "TABLE")) {
-        i++;
-        if (i < tokens.size() && tokens[i].first == "identifier") {
-            std::string tableName = tokens[i].second;
-            storedQuery.tableName = tableName;
-            astNode* tableNode = new astNode("TABLE", tableName);
-            parentNode->addChild(tableNode, "identifier"); // Provide the missing argument(s)
-            std::cout << "Table Name: " << tableName << std::endl;
-            i++;
-
-            // Parse column definitions
-            if (i < tokens.size() && tokens[i].second == "(") {
-                i++; // Skip '('
-                while (i < tokens.size() && tokens[i].second != ")") {
-                    if (tokens[i].first == "identifier") {
-                        std::string columnName = tokens[i].second;
-                        i++;
-                        if (i < tokens.size() && tokens[i].first == "datatype") {
-                            std::string columnType = tokens[i].second;
-                            astNode* columnNode = new astNode("COLUMN", columnName + " " + columnType);
-                            tableNode->addChild(columnNode, "identifier"); // Provide the missing argument(s)
-                            std::cout << "Adding child node of type: COLUMN with value: " << columnName + " " + columnType
-                                      << " to parent node of type: TABLE with value: " << tableNode->value << std::endl;
-                            std::cout << "Column: " << columnName << " Type: " << columnType << std::endl;
-                            i++;
-
-                            // Parse constraints
-                            while (i < tokens.size() && tokens[i].first == "keyword") {
-                                std::string constraint = tokens[i].second;
-
-                                if (constraint == "FOREIGN_KEY") {
-                                    astNode* constraintNode = new astNode("CONSTRAINT", "FOREIGN_KEY");
-                                    columnNode->addChild(constraintNode, "constraint"); // Provide the missing argument(s)
-                                    std::cout << "Adding child node of type: CONSTRAINT with value: FOREIGN_KEY to parent node of type: COLUMN with value: " << columnNode->value << std::endl;
-                                    i++;
-
-                                    // Check for reference table and column
-                                    if (i < tokens.size() && tokens[i].second == "REFERENCES") {
-                                        i++; // Skip "REFERENCES"
-                                        if (i < tokens.size() && tokens[i].first == "identifier") {
-                                            std::string referenceTable = tokens[i].second;
-                                            i++;
-                                            if (i < tokens.size() && tokens[i].second == "(") {
-                                                i++; // Skip '('
-                                                if (i < tokens.size() && tokens[i].first == "identifier") {
-                                                    std::string referenceColumn = tokens[i].second;
-                                                    i++;
-                                                    if (i < tokens.size() && tokens[i].second == ")") {
-                                                        i++; // Skip ')'
-                                                        constraintNode->addChild(new astNode("REFERENCE", referenceTable + "." + referenceColumn), "reference");
-                                                        std::cout << "Adding child node of type: REFERENCE with value: " << referenceTable + "." + referenceColumn << " to parent node of type: CONSTRAINT with value: FOREIGN_KEY" << std::endl;
-                                                    } else {
-                                                        std::cerr << "Error: Missing closing parenthesis for FOREIGN_KEY reference." << std::endl;
-                                                    }
-                                                } else {
-                                                    std::cerr << "Error: Missing column name in FOREIGN_KEY reference." << std::endl;
-                                                }
-                                            } else {
-                                                std::cerr << "Error: Missing opening parenthesis for FOREIGN_KEY reference." << std::endl;
-                                            }
-                                        } else {
-                                            std::cerr << "Error: Missing table name in FOREIGN_KEY reference." << std::endl;
-                                        }
-                                    } else {
-                                        std::cerr << "Error: FOREIGN_KEY constraint must include REFERENCES clause." << std::endl;
-                                    }
-                                } else if (constraint == "PRIMARY_KEY" || constraint == "NOT_NULL") {
-                                    columnNode->addChild(new astNode("CONSTRAINT", constraint), "constraint");
-                                    std::cout << "Adding child node of type: CONSTRAINT with value: " << constraint << " to parent node of type: COLUMN with value: " << columnNode->value << std::endl;
-                                    i++;
-                                } else {
-                                    break; // Stop parsing constraints if an unrecognized keyword is encountered
-                                }
-                            }
-                        } else {
-                            std::cerr << "Error: Expected datatype for column " << columnName << std::endl;
-                            return;
-                        }
-                    }
-                    if (i < tokens.size() && tokens[i].second == ",") {
-                        i++; // Skip comma
-                    }
-                }
-                if (i < tokens.size() && tokens[i].second == ")") {
-                    i++; // Skip ')'
-                } else {
-                    std::cerr << "Error: Missing closing parenthesis in column definitions." << std::endl;
-                }
-            } else {
-                std::cerr << "Error: Expected '(' after table name." << std::endl;
-            }
-        } else {
-            std::cerr << "Error: Expected table name after CREATE TABLE." << std::endl;
-        }
-    } else {
-        std::cerr << "Error: Expected TABLE keyword after CREATE." << std::endl;
-    }
-}
+bool parser::parseDelete(const std::vector<Token>& tokens, astNode* parentNode) {}
 
 // ---------------- Condition Parsing ----------------
-void parser::parseCondition(const std::vector<std::pair<std::string, std::string>>& tokens, size_t& i, queryStructure& storedQuery, astNode* parentNode) {
+bool parser::parseCondition(const std::vector<Token>& tokens, astNode* parentNode) {
+    std::cout << "Parsing condition..." << std::endl;
     astNode* conditionNode = new astNode("CONDITION", "");
-    parentNode->addChild(conditionNode, "condition"); // Provide the missing argument(s)
-
-    // Parse the left-hand side of the condition
-    if (i < tokens.size() && tokens[i].first == "identifier") {
-        if (i + 2 < tokens.size() && tokens[i + 1].second == "." && tokens[i + 2].first == "identifier") {
-            // Handle dot notation (e.g., o.user_id)
-            std::string aliasOrTable = tokens[i].second;
-            std::string columnName = tokens[i + 2].second;
-            conditionNode->addChild(new astNode("LEFT", "COLUMN(" + aliasOrTable + "." + columnName + ")"), "identifier");
-            i += 3;
-        } else {
-            // Handle standalone identifiers
-            conditionNode->addChild(new astNode("LEFT", "COLUMN(" + tokens[i].second + ")"), "identifier");
-            i++;
-        }
-    }
-
-    // Parse the operator
-    if (i < tokens.size() && (tokens[i].first == "operator" || isToken(tokens[i], "keyword", "IN") || isToken(tokens[i], "keyword", "LIKE") || isToken(tokens[i], "keyword", "BETWEEN"))) {
-        conditionNode->addChild(new astNode("OPERATOR", tokens[i].second), "operator");
-        i++;
-    }
-
-    // Parse the right-hand side of the condition
-    if (i < tokens.size()) {
-        if (tokens[i].second == "(") {
-            // Handle subquery on the right-hand side
-            astNode* rightNode = new astNode("RIGHT", "QUERY");
-            conditionNode->addChild(rightNode, "query"); // Specify the type or relationship of the child node
-            handleSubquery(tokens, i, storedQuery, rightNode);
-        } else if (tokens[i].first == "number" || tokens[i].first == "string" || tokens[i].first == "double") {
-            conditionNode->addChild(new astNode("RIGHT", "VALUE(" + tokens[i].second + ")"), tokens[i].first); // Pass token type
-            i++;
-        } else if (tokens[i].first == "identifier") {
-            if (i + 2 < tokens.size() && tokens[i + 1].second == "." && tokens[i + 2].first == "identifier") {
-                // Handle dot notation (e.g., u.id)
-                std::string aliasOrTable = tokens[i].second;
-                std::string columnName = tokens[i + 2].second;
-                conditionNode->addChild(new astNode("RIGHT", "COLUMN(" + aliasOrTable + "." + columnName + ")"), "identifier");
-                i += 3;
-            } else {
-                // Handle standalone identifiers
-                conditionNode->addChild(new astNode("RIGHT", "COLUMN(" + tokens[i].second + ")"), "identifier");
-                i++;
-            }
-        }
-    }
+    parentNode->addChild(conditionNode);
+    
+    return parseLogicalExpression(tokens, conditionNode);
 }
 
-void parser::parse(const std::vector<std::pair<std::string, std::string>>& tokens, size_t& i, queryStructure& storedQuery, astNode* parentNode) {
+// Parse logical expressions (AND, OR)
+bool parser::parseLogicalExpression(const std::vector<Token>& tokens, astNode* parentNode) {
+    if (!parseLogicalTerm(tokens, parentNode)) {
+        return false;
+    }
+    
+    while (itr.getVal() < tokens.size()) {
+        const Token& currentToken = tokens[itr.getVal()];
+        
+        if (currentToken.type == TokenType::KEYWORD && 
+            (currentToken.value == "OR" || currentToken.value == "||")) {
+            std::cout << "Logical OR operator found" << std::endl;
+            astNode* orNode = new astNode("LOGICAL_OP", "OR");
+            parentNode->addChild(orNode);
+            itr += 1;
+            
+            if (!parseLogicalTerm(tokens, orNode)) {
+                return false;
+            }
+        } else {
+            break;
+        }
+    }
+    
+    return true;
+}
+
+// Parse logical terms (AND operations)
+bool parser::parseLogicalTerm(const std::vector<Token>& tokens, astNode* parentNode) {
+    if (!parseLogicalFactor(tokens, parentNode)) {
+        return false;
+    }
+    
+    while (itr.getVal() < tokens.size()) {
+        const Token& currentToken = tokens[itr.getVal()];
+        
+        if (currentToken.type == TokenType::KEYWORD && 
+            (currentToken.value == "AND" || currentToken.value == "&&")) {
+            std::cout << "Logical AND operator found" << std::endl;
+            astNode* andNode = new astNode("LOGICAL_OP", "AND");
+            parentNode->addChild(andNode);
+            itr += 1;
+            
+            if (!parseLogicalFactor(tokens, andNode)) {
+                return false;
+            }
+        } else {
+            break;
+        }
+    }
+    
+    return true;
+}
+
+// Parse logical factors (NOT, parentheses, comparison expressions)
+bool parser::parseLogicalFactor(const std::vector<Token>& tokens, astNode* parentNode) {
+    if (itr.getVal() >= tokens.size()) {
+        return false;
+    }
+    
+    const Token& currentToken = tokens[itr.getVal()];
+    
+    // Handle NOT operator
+    if (currentToken.type == TokenType::KEYWORD && currentToken.value == "NOT") {
+        std::cout << "NOT operator found" << std::endl;
+        astNode* notNode = new astNode("LOGICAL_OP", "NOT");
+        parentNode->addChild(notNode);
+        itr += 1;
+        
+        return parseLogicalFactor(tokens, notNode);
+    }
+    
+    // Handle parentheses
+    if (currentToken.type == TokenType::PUNCTUATION && currentToken.value == "(") {
+        std::cout << "Opening parenthesis found in condition" << std::endl;
+        itr += 1;
+        
+        astNode* groupNode = new astNode("GROUP", "");
+        parentNode->addChild(groupNode);
+        
+        if (!parseLogicalExpression(tokens, groupNode)) {
+            return false;
+        }
+        
+        if (itr.getVal() >= tokens.size() || 
+            tokens[itr.getVal()].type != TokenType::PUNCTUATION || 
+            tokens[itr.getVal()].value != ")") {
+            std::cout << "Error: Expected closing parenthesis" << std::endl;
+            return false;
+        }
+        
+        std::cout << "Closing parenthesis found" << std::endl;
+        itr += 1;
+        return true;
+    }
+    
+    // Handle comparison expressions
+    return parseComparisonExpression(tokens, parentNode);
+}
+
+// Parse comparison expressions (=, <, >, <=, >=, <>, !=, LIKE, IN, BETWEEN, IS, EXISTS)
+bool parser::parseComparisonExpression(const std::vector<Token>& tokens, astNode* parentNode) {
+    astNode* comparisonNode = new astNode("COMPARISON", "");
+    parentNode->addChild(comparisonNode);
+    
+    // Parse left operand
+    if (!parseValue(tokens, comparisonNode)) {
+        std::cout << "Error: Expected value or column in comparison" << std::endl;
+        return false;
+    }
+    
+    if (itr.getVal() >= tokens.size()) {
+        return true; // Simple value without comparison
+    }
+    
+    const Token& operatorToken = tokens[itr.getVal()];
+    
+    // Handle different types of operators
+    if (operatorToken.type == TokenType::OPERATOR) {
+        return parseSimpleComparison(tokens, comparisonNode);
+    } else if (operatorToken.type == TokenType::KEYWORD) {
+        if (operatorToken.value == "LIKE") {
+            return parseLikeExpression(tokens, comparisonNode);
+        } else if (operatorToken.value == "IN") {
+            return parseInExpression(tokens, comparisonNode);
+        } else if (operatorToken.value == "BETWEEN") {
+            return parseBetweenExpression(tokens, comparisonNode);
+        } else if (operatorToken.value == "IS") {
+            return parseIsExpression(tokens, comparisonNode);
+        } else if (operatorToken.value == "EXISTS") {
+            return parseExistsExpression(tokens, comparisonNode);
+        }
+    }
+    
+    return true; // No operator found, just a simple value
+}
+
+// Parse simple comparison operators (=, <, >, <=, >=, <>, !=)
+bool parser::parseSimpleComparison(const std::vector<Token>& tokens, astNode* parentNode) {
+    const Token& operatorToken = tokens[itr.getVal()];
+    std::cout << "Comparison operator: " << operatorToken.value << std::endl;
+    
+    astNode* operatorNode = new astNode("OPERATOR", operatorToken.value);
+    parentNode->addChild(operatorNode);
+    itr += 1;
+    
+    // Parse right operand
+    if (!parseValue(tokens, parentNode)) {
+        std::cout << "Error: Expected value after comparison operator" << std::endl;
+        return false;
+    }
+    
+    return true;
+}
+
+// Parse LIKE expression
+bool parser::parseLikeExpression(const std::vector<Token>& tokens, astNode* parentNode) {
+    std::cout << "LIKE operator found" << std::endl;
+    astNode* likeNode = new astNode("LIKE", "");
+    parentNode->addChild(likeNode);
+    itr += 1;
+    
+    if (!parseValue(tokens, likeNode)) {
+        std::cout << "Error: Expected pattern after LIKE" << std::endl;
+        return false;
+    }
+    
+    return true;
+}
+
+// Parse IN expression
+bool parser::parseInExpression(const std::vector<Token>& tokens, astNode* parentNode) {
+    std::cout << "IN operator found" << std::endl;
+    astNode* inNode = new astNode("IN", "");
+    parentNode->addChild(inNode);
+    itr += 1;
+    
+    if (itr.getVal() >= tokens.size()) {
+        std::cout << "Error: Expected value list or subquery after IN" << std::endl;
+        return false;
+    }
+    
+    const Token& nextToken = tokens[itr.getVal()];
+    
+    if (nextToken.type == TokenType::PUNCTUATION && nextToken.value == "(") {
+        itr += 1;
+        
+        // Check if it's a subquery
+        if (itr.getVal() < tokens.size() && 
+            tokens[itr.getVal()].type == TokenType::KEYWORD && 
+            tokens[itr.getVal()].value == "SELECT") {
+            std::cout << "Subquery in IN clause detected" << std::endl;
+            return handleSubquery(tokens, inNode);
+        } else {
+            // Parse value list
+            std::cout << "Value list in IN clause" << std::endl;
+            astNode* valueListNode = new astNode("VALUE_LIST", "");
+            inNode->addChild(valueListNode);
+            
+            do {
+                if (!parseValue(tokens, valueListNode)) {
+                    std::cout << "Error: Expected value in IN list" << std::endl;
+                    return false;
+                }
+                
+                if (itr.getVal() < tokens.size() && 
+                    tokens[itr.getVal()].type == TokenType::PUNCTUATION && 
+                    tokens[itr.getVal()].value == ",") {
+                    itr += 1;
+                } else {
+                    break;
+                }
+            } while (itr.getVal() < tokens.size());
+            
+            if (itr.getVal() >= tokens.size() || 
+                tokens[itr.getVal()].type != TokenType::PUNCTUATION || 
+                tokens[itr.getVal()].value != ")") {
+                std::cout << "Error: Expected closing parenthesis in IN clause" << std::endl;
+                return false;
+            }
+            itr += 1;
+        }
+    }
+    
+    return true;
+}
+
+// Parse BETWEEN expression
+bool parser::parseBetweenExpression(const std::vector<Token>& tokens, astNode* parentNode) {
+    std::cout << "BETWEEN operator found" << std::endl;
+    astNode* betweenNode = new astNode("BETWEEN", "");
+    parentNode->addChild(betweenNode);
+    itr += 1;
+    
+    // Parse first value
+    if (!parseValue(tokens, betweenNode)) {
+        std::cout << "Error: Expected first value after BETWEEN" << std::endl;
+        return false;
+    }
+    
+    // Expect AND keyword
+    if (itr.getVal() >= tokens.size() || 
+        tokens[itr.getVal()].type != TokenType::KEYWORD || 
+        tokens[itr.getVal()].value != "AND") {
+        std::cout << "Error: Expected AND after first value in BETWEEN" << std::endl;
+        return false;
+    }
+    itr += 1;
+    
+    // Parse second value
+    if (!parseValue(tokens, betweenNode)) {
+        std::cout << "Error: Expected second value after AND in BETWEEN" << std::endl;
+        return false;
+    }
+    
+    return true;
+}
+
+// Parse IS expression (IS NULL, IS NOT NULL)
+bool parser::parseIsExpression(const std::vector<Token>& tokens, astNode* parentNode) {
+    std::cout << "IS operator found" << std::endl;
+    astNode* isNode = new astNode("IS", "");
+    parentNode->addChild(isNode);
+    itr += 1;
+    
+    if (itr.getVal() >= tokens.size()) {
+        std::cout << "Error: Expected value after IS" << std::endl;
+        return false;
+    }
+    
+    const Token& nextToken = tokens[itr.getVal()];
+    
+    // Handle IS NOT
+    if (nextToken.type == TokenType::KEYWORD && nextToken.value == "NOT") {
+        std::cout << "IS NOT found" << std::endl;
+        astNode* notNode = new astNode("NOT", "");
+        isNode->addChild(notNode);
+        itr += 1;
+        
+        if (!parseValue(tokens, notNode)) {
+            std::cout << "Error: Expected value after IS NOT" << std::endl;
+            return false;
+        }
+    } else {
+        if (!parseValue(tokens, isNode)) {
+            std::cout << "Error: Expected value after IS" << std::endl;
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+// Parse EXISTS expression
+bool parser::parseExistsExpression(const std::vector<Token>& tokens, astNode* parentNode) {
+    std::cout << "EXISTS operator found" << std::endl;
+    astNode* existsNode = new astNode("EXISTS", "");
+    parentNode->addChild(existsNode);
+    itr += 1;
+    
+    if (itr.getVal() >= tokens.size() || 
+        tokens[itr.getVal()].type != TokenType::PUNCTUATION || 
+        tokens[itr.getVal()].value != "(") {
+        std::cout << "Error: Expected opening parenthesis after EXISTS" << std::endl;
+        return false;
+    }
+    itr += 1;
+    
+    // Parse subquery
+    if (itr.getVal() >= tokens.size() || 
+        tokens[itr.getVal()].type != TokenType::KEYWORD || 
+        tokens[itr.getVal()].value != "SELECT") {
+        std::cout << "Error: Expected SELECT after EXISTS(" << std::endl;
+        return false;
+    }
+    
+    return handleSubquery(tokens, existsNode);
+}
+
+// Parse values (identifiers, literals, subqueries, functions)
+bool parser::parseValue(const std::vector<Token>& tokens, astNode* parentNode) {
+    if (itr.getVal() >= tokens.size()) {
+        return false;
+    }
+    
+    const Token& currentToken = tokens[itr.getVal()];
+    
+    // Handle table.column format
+    if (isTableColumn(tokens, itr.getVal())) {
+        std::cout << "Table column: " << tokens[itr.getVal()].value << "." << tokens[itr.getVal() + 2].value << std::endl;
+        astNode* columnNode = new astNode("COLUMN", tokens[itr.getVal()].value + "." + tokens[itr.getVal() + 2].value);
+        parentNode->addChild(columnNode);
+        itr += 3;
+        return true;
+    }
+    
+    // Handle different token types
+    switch (currentToken.type) {
+        case TokenType::IDENTIFIER:
+            std::cout << "Column: " << currentToken.value << std::endl;
+            parentNode->addChild(new astNode("COLUMN", currentToken.value));
+            itr += 1;
+            return true;
+            
+        case TokenType::NUMBER:
+        case TokenType::DOUBLE:
+            std::cout << "Number: " << currentToken.value << std::endl;
+            parentNode->addChild(new astNode("NUMBER", currentToken.value));
+            itr += 1;
+            return true;
+            
+        case TokenType::STRING:
+            std::cout << "String: " << currentToken.value << std::endl;
+            parentNode->addChild(new astNode("STRING", currentToken.value));
+            itr += 1;
+            return true;
+            
+        case TokenType::DATE:
+            std::cout << "Date: " << currentToken.value << std::endl;
+            parentNode->addChild(new astNode("DATE", currentToken.value));
+            itr += 1;
+            return true;
+            
+        case TokenType::KEYWORD:
+            if (currentToken.value == "NULL") {
+                std::cout << "NULL value" << std::endl;
+                parentNode->addChild(new astNode("NULL", "NULL"));
+                itr += 1;
+                return true;
+            } else if (currentToken.value == "TRUE" || currentToken.value == "FALSE") {
+                std::cout << "Boolean: " << currentToken.value << std::endl;
+                parentNode->addChild(new astNode("BOOLEAN", currentToken.value));
+                itr += 1;
+                return true;
+            } else if (currentToken.value == "SELECT") {
+                std::cout << "Subquery detected" << std::endl;
+                return handleSubquery(tokens, parentNode);
+            }
+            break;
+            
+        case TokenType::PUNCTUATION:
+            if (currentToken.value == "(") {
+                // Could be a subquery or function call
+                itr += 1;
+                if (itr.getVal() < tokens.size() && 
+                    tokens[itr.getVal()].type == TokenType::KEYWORD && 
+                    tokens[itr.getVal()].value == "SELECT") {
+                    std::cout << "Subquery in parentheses" << std::endl;
+                    return handleSubquery(tokens, parentNode);
+                } else {
+                    // Parenthesized expression
+                    astNode* groupNode = new astNode("GROUP", "");
+                    parentNode->addChild(groupNode);
+                    
+                    if (!parseLogicalExpression(tokens, groupNode)) {
+                        return false;
+                    }
+                    
+                    if (itr.getVal() >= tokens.size() || 
+                        tokens[itr.getVal()].type != TokenType::PUNCTUATION || 
+                        tokens[itr.getVal()].value != ")") {
+                        std::cout << "Error: Expected closing parenthesis" << std::endl;
+                        return false;
+                    }
+                    itr += 1;
+                    return true;
+                }
+            }
+            break;
+            
+        default:
+            break;
+    }
+    
+    std::cout << "Error: Unexpected token in value: " << currentToken.value << std::endl;
+    return false;
+}
+
+bool parser::parse(const std::vector<Token>& tokens, astNode* parentNode) {
     std::cout << "Starting parsing process..." << std::endl;
 
     // Define the function map
-    std::unordered_map<std::string, std::function<void(const std::vector<std::pair<std::string, std::string>>&, size_t&, queryStructure&, astNode*)>> functionMap = {
-        {"SELECT", std::bind(&parser::parseSelect, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4)},
-        {"INSERT", std::bind(&parser::parseInsert, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4)},
-        {"UPDATE", std::bind(&parser::parseUpdate, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4)},
-        {"DELETE", std::bind(&parser::parseDelete, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4)},
-        {"CREATE", std::bind(&parser::parseCreate, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4)}
+    std::unordered_map<std::string, std::function<bool(const std::vector<Token>& tokens, astNode* parentNode)>> functionMap = {
+        {"SELECT", std::bind(&parser::parseSelect, this, std::placeholders::_1, std::placeholders::_2)},
+        {"INSERT", std::bind(&parser::parseInsert, this, std::placeholders::_1, std::placeholders::_2)},
+        {"UPDATE", std::bind(&parser::parseUpdate, this, std::placeholders::_1, std::placeholders::_2)},
+        {"DELETE", std::bind(&parser::parseDelete, this, std::placeholders::_1, std::placeholders::_2)},
+        {"CREATE", std::bind(&parser::parseCreate, this, std::placeholders::_1, std::placeholders::_2)}
     };
 
-    while (i < tokens.size()) {
-        const auto& token = tokens[i];
-
-        if (token.first == "keyword") {
-            storedQuery.commandType = token.second;
-            std::cout << "Command Type: " << token.second << std::endl;
-
-            astNode* queryNode = new astNode("QUERY", token.second);
-            parentNode->addChild(queryNode, "query"); // Provide the missing argument(s)
-
-            auto it = functionMap.find(token.second);
-            if (it != functionMap.end()) {
-                i++;
-                it->second(tokens, i, storedQuery, queryNode); // Call the appropriate function
-            } else {
-                std::cerr << "Error: Unsupported command type: " << token.second << std::endl;
-            }
-        }
-        i++;
+    if (tokens.empty()) {
+        std::cout << "No tokens to parse." << std::endl;
+        return false;
     }
 
-
+    const Token& firstToken = tokens[0];
+    std::string firstTokenValueUpper = firstToken.value;
+    std::transform(firstTokenValueUpper.begin(), firstTokenValueUpper.end(), firstTokenValueUpper.begin(), ::toupper);
+    auto it = functionMap.find(firstTokenValueUpper);
+    if (it != functionMap.end()) {
+        std::cout << "Identified command: " << firstTokenValueUpper << std::endl;
+        return it->second(tokens, parentNode);
+    } else {
+        std::cout << "Error: Unrecognized command '" << firstToken.value << "'" << std::endl;
+        return false;
+    }
     std::cout << "Parsing completed." << std::endl;
 }

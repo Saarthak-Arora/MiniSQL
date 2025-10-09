@@ -90,14 +90,24 @@ bool lexer::isFloatingPoint(const std::string& str) {
 }
 
 bool lexer::isDateFormat(const std::string& str) {
-    if (str.size() != 10) return false; // YYYY-MM-DD format
-    if (str[4] != '-' || str[7] != '-') return false;
-    
-    // Check if year, month, day are numeric
-    for (size_t i = 0; i < str.size(); ++i) {
-        if (i == 4 || i == 7) continue; // Skip dashes
-        if (!std::isdigit(str[i])) return false;
+    if (str.size() != 10 || str[4] != '-' || str[7] != '-') return false;
+
+    std::string year = str.substr(0, 4);
+    std::string month = str.substr(5, 2);
+    std::string day = str.substr(8, 2);
+
+    if (!std::all_of(year.begin(), year.end(), ::isdigit) ||
+        !std::all_of(month.begin(), month.end(), ::isdigit) ||
+        !std::all_of(day.begin(), day.end(), ::isdigit)) {
+        return false;
     }
+
+    int monthInt = std::stoi(month);
+    int dayInt = std::stoi(day);
+
+    if (monthInt < 1 || monthInt > 12) return false;
+    if (dayInt < 1 || dayInt > 31) return false; 
+
     return true;
 }
 
@@ -216,6 +226,7 @@ std::vector<Token> lexer::tokenize(const std::string& input) {
         
         if (std::isspace(ch)) {
             if (!currentToken.empty()) {
+                // Check for multi-word constraints before classifying
                 auto [isMultiWord, constraintStr] = checkMultiWordConstraint(currentToken, input, i);
                 if (isMultiWord) {
                     size_t nextTokenStart = i;
@@ -230,10 +241,8 @@ std::vector<Token> lexer::tokenize(const std::string& input) {
                     }
                     
                     if (!nextToken.empty()) {
-                        tokens.push_back(Token(TokenType::CONSTRAINT, constraintStr, 
-                                             currentToken + " " + nextToken, position, line, column - currentToken.size()));
+                        tokens.push_back(Token(TokenType::CONSTRAINT, constraintStr, position, line, column - currentToken.size()));
                         currentToken.clear();
-                        
                         i = nextTokenEnd - 1;
                         continue;
                     }
@@ -245,6 +254,7 @@ std::vector<Token> lexer::tokenize(const std::string& input) {
             continue;
         }
         
+        // Handle multi-character operators
         if (i + 1 < input.size()) {
             std::string twoChar = std::string(1, ch) + input[i + 1];
             if (operator_map.find(twoChar) != operator_map.end()) {
@@ -259,7 +269,7 @@ std::vector<Token> lexer::tokenize(const std::string& input) {
             }
         }
         
-        
+        // Handle string literals
         if (ch == '\'') {
             if (!currentToken.empty()) {
                 tokens.push_back(classifyToken(currentToken, position, line, column - currentToken.size()));
@@ -269,7 +279,6 @@ std::vector<Token> lexer::tokenize(const std::string& input) {
             std::string stringLiteral(1, ch);
             i++;
             column++;
-            
             
             while (i < input.size() && input[i] != '\'') {
                 stringLiteral += input[i];
@@ -286,7 +295,6 @@ std::vector<Token> lexer::tokenize(const std::string& input) {
                 stringLiteral += input[i]; 
                 column++;
             } else {
-    
                 tokens.push_back(Token(TokenType::ERROR, "unclosed_string_literal", position, line, column));
                 continue;
             }
@@ -295,6 +303,16 @@ std::vector<Token> lexer::tokenize(const std::string& input) {
             continue;
         }
         
+        // Handle numbers (including decimals and negative numbers)
+        if (std::isdigit(ch) || 
+            (ch == '-' && i + 1 < input.size() && std::isdigit(input[i + 1]) && currentToken.empty()) ||
+            (ch == '+' && i + 1 < input.size() && std::isdigit(input[i + 1]) && currentToken.empty()) ||
+            (ch == '.' && !currentToken.empty() && std::all_of(currentToken.begin(), currentToken.end(), ::isdigit))) {
+            currentToken += ch;
+            continue;
+        }
+        
+        // Handle punctuation
         std::string singleChar(1, ch);
         if (punctuation_map.find(singleChar) != punctuation_map.end()) {
             if (!currentToken.empty()) {
@@ -305,6 +323,7 @@ std::vector<Token> lexer::tokenize(const std::string& input) {
             continue;
         }
         
+        // Handle single-character operators
         if (operator_map.find(singleChar) != operator_map.end()) {
             if (!currentToken.empty()) {
                 tokens.push_back(classifyToken(currentToken, position, line, column - currentToken.size()));
@@ -313,6 +332,8 @@ std::vector<Token> lexer::tokenize(const std::string& input) {
             tokens.push_back(Token(TokenType::OPERATOR, singleChar, position, line, column));
             continue;
         }
+        
+        // Default: accumulate character
         currentToken += ch;
     }
     

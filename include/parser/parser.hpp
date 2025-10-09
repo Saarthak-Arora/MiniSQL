@@ -2,21 +2,51 @@
 #include <string>
 #include <vector>
 #include <utility>
-#include "structQuery.hpp"
 #include "ast.hpp"
+#include "../common/token.hpp"
+#include "../../utils/Iterator.hpp"
 
 class parser{
     public:
-        std::vector<std::string> commandTypes = {"SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER"};
-        bool isToken(const std::pair<std::string, std::string>& token, const std::string& type, const std::string& value);
-        bool handleSubquery(const std::vector<std::pair<std::string, std::string>>& tokens, size_t& i, queryStructure &parentQuery, astNode* parentNode = nullptr);
-        void parseSelect(const std::vector<std::pair<std::string, std::string>>& tokens, size_t& i, queryStructure &storedQuery, astNode* parentNode = nullptr);
-        void parseInsert(const std::vector<std::pair<std::string, std::string>>& tokens, size_t& i, queryStructure &storedQuery, astNode* parentNode = nullptr);
-        void parseUpdate(const std::vector<std::pair<std::string, std::string>>& tokens, size_t& i,  queryStructure &storedQuery, astNode* parentNode = nullptr);
-        void parseDelete(const std::vector<std::pair<std::string, std::string>>& tokens, size_t& i, queryStructure &storedQuery, astNode* parentNode = nullptr);
-        void parseCreate(const std::vector<std::pair<std::string, std::string>>& tokens, size_t& i,  queryStructure &storedQuery, astNode* parentNode = nullptr); 
-        void parseCondition(const std::vector<std::pair<std::string, std::string>>& tokens, size_t& i, queryStructure &storedQuery, astNode* parentNode = nullptr);
-        void parse(const std::vector<std::pair<std::string, std::string>>& tokens, size_t& i, queryStructure &storedQuery, astNode* parentNode = nullptr);
+        parser() = default;
+        ~parser() = default;
+        Iterator itr;
+        
+        // Basic parsing methods
+        bool isToken(const Token& token, TokenType type, const std::string& value = "");
+        bool handleSubquery(const std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        bool parseSelect(const  std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        bool parseInsert(const  std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        bool parseUpdate(const  std::vector<Token>& tokens,  astNode* parentNode = nullptr);
+        bool parseDelete(const  std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        bool parseCreate(const  std::vector<Token>& tokens,  astNode* parentNode = nullptr); 
+        bool parse(const  std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        
+        // Enhanced SELECT parsing methods
+        bool parseSelectList(const std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        bool parseSelectExpression(const std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        bool parseAggregateFunction(const std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        bool parseFromClause(const std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        bool parseTableReference(const std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        bool parseJoinClause(const std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        bool parseGroupBy(const std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        bool parseHaving(const std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        bool parseOrderBy(const std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        bool parseLimit(const std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        
+        // Enhanced condition parsing methods
+        bool parseCondition(const  std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        bool parseLogicalExpression(const  std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        bool parseLogicalTerm(const  std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        bool parseLogicalFactor(const  std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        bool parseComparisonExpression(const  std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        bool parseSimpleComparison(const  std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        bool parseLikeExpression(const  std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        bool parseInExpression(const  std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        bool parseBetweenExpression(const  std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        bool parseIsExpression(const  std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        bool parseExistsExpression(const  std::vector<Token>& tokens, astNode* parentNode = nullptr);
+        bool parseValue(const  std::vector<Token>& tokens, astNode* parentNode = nullptr);
 };
 
 
